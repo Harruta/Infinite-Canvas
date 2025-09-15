@@ -7,7 +7,8 @@ import { useState, useRef, useCallback, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { ChevronLeft, Send, Copy, Trash2, Bot, Zap, Brain, Sparkles, Paperclip, Moon, Sun, Mic } from "lucide-react"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"
+import { ChevronLeft, Send, Copy, Trash2, Bot, Zap, Brain, Sparkles, Paperclip, Moon, Sun, Mic, Plus, Settings, Key } from "lucide-react"
 
 interface ChatBox {
   id: string
@@ -25,6 +26,20 @@ interface Note {
   timestamp: Date
 }
 
+interface ApiKey {
+  id: string
+  provider: string
+  key: string
+  label: string
+}
+
+interface ApiKeyInput {
+  id: string
+  provider: string
+  key: string
+  label: string
+}
+
 const AI_MODELS = [
   { name: "GPT-4", icon: Bot, color: "text-blue-500" },
   { name: "Claude", icon: Zap, color: "text-purple-500" },
@@ -32,23 +47,15 @@ const AI_MODELS = [
   { name: "Llama", icon: Sparkles, color: "text-orange-500" },
 ]
 
+const API_PROVIDERS = [
+  { name: "OpenAI", models: ["GPT-4", "GPT-3.5"], placeholder: "sk-..." },
+  { name: "Anthropic", models: ["Claude"], placeholder: "sk-ant-..." },
+  { name: "Google", models: ["Gemini"], placeholder: "AIza..." },
+  { name: "Ollama", models: ["Llama"], placeholder: "http://localhost:11434" },
+]
+
 export default function InfiniteCanvasApp() {
-  const [chatBoxes, setChatBoxes] = useState<ChatBox[]>([
-    {
-      id: "1",
-      x: 400,
-      y: 300,
-      messages: [
-        {
-          role: "assistant",
-          content:
-            "Hello! I'm your AI assistant. This is some dummy text to demonstrate text selection functionality. You can select any part of this text and see the selection bar appear with options to add to notepad or create new AI chat boxes. Try selecting different portions of this response to see how the interface works. The selection bar will show various AI model options that you can use to continue the conversation with different AI assistants.",
-        },
-      ],
-      input: "",
-      llmType: "GPT-4",
-    },
-  ])
+  const [chatBoxes, setChatBoxes] = useState<ChatBox[]>([])
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState("")
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -59,8 +66,260 @@ export default function InfiniteCanvasApp() {
   const [draggedChatBox, setDraggedChatBox] = useState<string | null>(null)
   const [isDarkMode, setIsDarkMode] = useState(false)
   const [selectionSource, setSelectionSource] = useState<string | null>(null)
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([])
+  const [showWelcomeModal, setShowWelcomeModal] = useState(false)
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false)
+  const [apiKeyInputs, setApiKeyInputs] = useState<ApiKeyInput[]>([
+    { id: "1", provider: "OpenAI", key: "", label: "OpenAI API Key" }
+  ])
 
   const canvasRef = useRef<HTMLDivElement>(null)
+
+  // Check for existing API keys on mount
+  useEffect(() => {
+    const savedKeys = localStorage.getItem('llm-playground-api-keys')
+    if (savedKeys) {
+      try {
+        const parsedKeys = JSON.parse(savedKeys)
+        setApiKeys(parsedKeys)
+        
+        // If user has API keys but no chat boxes, create a welcome chat box
+        if (parsedKeys.length > 0 && chatBoxes.length === 0) {
+          // Determine the best model to use
+          let selectedModel = "GPT-4"
+          if (parsedKeys.find((key: ApiKey) => key.provider === "OpenAI")) {
+            selectedModel = "GPT-4"
+          } else if (parsedKeys.find((key: ApiKey) => key.provider === "Anthropic")) {
+            selectedModel = "Claude"
+          } else if (parsedKeys.find((key: ApiKey) => key.provider === "Google")) {
+            selectedModel = "Gemini"
+          } else if (parsedKeys.find((key: ApiKey) => key.provider === "Ollama")) {
+            selectedModel = "Llama"
+          }
+
+          const initialChatBox: ChatBox = {
+            id: "welcome",
+            x: 400,
+            y: 300,
+            messages: [
+              {
+                role: "assistant",
+                content: "🤔 Preparing your canvas...",
+              },
+            ],
+            input: "",
+            llmType: selectedModel,
+          }
+          setChatBoxes([initialChatBox])
+
+          // Generate welcome message from LLM
+          const generateWelcome = async () => {
+            try {
+              const welcomePrompt = [
+                {
+                  role: "user",
+                  content: "Welcome the user back to their infinite canvas LLM playground. Mention that their API keys are ready and they can start creating branching AI conversations. Be brief but enthusiastic."
+                }
+              ]
+
+              const response = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                  messages: welcomePrompt,
+                  model: selectedModel,
+                  provider: parsedKeys.find((key: ApiKey) => {
+                    const providerModels = API_PROVIDERS.find(p => p.name === key.provider)?.models || []
+                    return providerModels.includes(selectedModel)
+                  })?.provider,
+                  apiKey: parsedKeys.find((key: ApiKey) => {
+                    const providerModels = API_PROVIDERS.find(p => p.name === key.provider)?.models || []
+                    return providerModels.includes(selectedModel)
+                  })?.key,
+                }),
+              })
+
+              if (response.ok) {
+                const data = await response.json()
+                setChatBoxes(prev => prev.map(box => 
+                  box.id === "welcome" 
+                    ? { ...box, messages: [{ role: "assistant", content: data.response }] }
+                    : box
+                ))
+              } else {
+                setChatBoxes(prev => prev.map(box => 
+                  box.id === "welcome" 
+                    ? { 
+                        ...box, 
+                        messages: [{ 
+                          role: "assistant", 
+                          content: "🎉 Welcome back! Your API keys are ready. Start exploring by typing a message or selecting text to create new conversations!" 
+                        }] 
+                      }
+                    : box
+                ))
+              }
+            } catch (error) {
+              console.error('Error generating welcome message:', error)
+              setChatBoxes(prev => prev.map(box => 
+                box.id === "welcome" 
+                  ? { 
+                      ...box, 
+                      messages: [{ 
+                        role: "assistant", 
+                        content: "🎉 Welcome back to your LLM Playground! Ready to explore?" 
+                      }] 
+                    }
+                  : box
+              ))
+            }
+          }
+
+          generateWelcome()
+        }
+      } catch (error) {
+        console.error('Error parsing saved API keys:', error)
+        setShowWelcomeModal(true)
+      }
+    } else {
+      // Show welcome modal for new users
+      setShowWelcomeModal(true)
+    }
+  }, [])
+
+  // API Key Management Functions
+  const addApiKeyInput = useCallback(() => {
+    const newInput: ApiKeyInput = {
+      id: Date.now().toString(),
+      provider: "OpenAI",
+      key: "",
+      label: "API Key"
+    }
+    setApiKeyInputs(prev => [...prev, newInput])
+  }, [])
+
+  const removeApiKeyInput = useCallback((id: string) => {
+    setApiKeyInputs(prev => prev.filter(input => input.id !== id))
+  }, [])
+
+  const updateApiKeyInput = useCallback((id: string, field: keyof ApiKeyInput, value: string) => {
+    setApiKeyInputs(prev => prev.map(input => 
+      input.id === id ? { ...input, [field]: value } : input
+    ))
+  }, [])
+
+  const saveApiKeys = useCallback(async () => {
+    const validKeys = apiKeyInputs.filter(input => input.key.trim() !== '')
+    const keysToSave: ApiKey[] = validKeys.map(input => ({
+      id: input.id,
+      provider: input.provider,
+      key: input.key,
+      label: input.label
+    }))
+    
+    setApiKeys(keysToSave)
+    localStorage.setItem('llm-playground-api-keys', JSON.stringify(keysToSave))
+    setShowApiKeyModal(false)
+    setShowWelcomeModal(false)
+    
+    // Create initial welcome chat box if none exist
+    if (chatBoxes.length === 0 && keysToSave.length > 0) {
+      // Determine the best model to use based on available API keys
+      let selectedModel = "GPT-4"
+      if (keysToSave.find(key => key.provider === "OpenAI")) {
+        selectedModel = "GPT-4"
+      } else if (keysToSave.find(key => key.provider === "Anthropic")) {
+        selectedModel = "Claude"
+      } else if (keysToSave.find(key => key.provider === "Google")) {
+        selectedModel = "Gemini"
+      } else if (keysToSave.find(key => key.provider === "Ollama")) {
+        selectedModel = "Llama"
+      }
+
+      const initialChatBox: ChatBox = {
+        id: "welcome",
+        x: 400,
+        y: 300,
+        messages: [
+          {
+            role: "assistant",
+            content: "🤔 Generating welcome message...",
+          },
+        ],
+        input: "",
+        llmType: selectedModel,
+      }
+      setChatBoxes([initialChatBox])
+
+      // Generate a real welcome message from the LLM
+      try {
+        const welcomePrompt = [
+          {
+            role: "user",
+            content: "You are now connected to an infinite canvas LLM playground where users can create branching conversations, select text to spawn new AI chats, and build a visual web of ideas. Please introduce yourself briefly and explain what makes this canvas-based approach to AI conversation unique and exciting. Keep it concise but engaging."
+          }
+        ]
+
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            messages: welcomePrompt,
+            model: selectedModel,
+            provider: keysToSave.find(key => {
+              const providerModels = API_PROVIDERS.find(p => p.name === key.provider)?.models || []
+              return providerModels.includes(selectedModel)
+            })?.provider,
+            apiKey: keysToSave.find(key => {
+              const providerModels = API_PROVIDERS.find(p => p.name === key.provider)?.models || []
+              return providerModels.includes(selectedModel)
+            })?.key,
+          }),
+        })
+
+        if (response.ok) {
+          const data = await response.json()
+          // Update the welcome message with the real LLM response
+          setChatBoxes(prev => prev.map(box => 
+            box.id === "welcome" 
+              ? { ...box, messages: [{ role: "assistant", content: data.response }] }
+              : box
+          ))
+        } else {
+          // Fallback if API call fails
+          setChatBoxes(prev => prev.map(box => 
+            box.id === "welcome" 
+              ? { 
+                  ...box, 
+                  messages: [{ 
+                    role: "assistant", 
+                    content: "🎉 Welcome to your LLM Playground! Your API keys are configured and ready. Start exploring the infinite canvas by typing a message below or selecting text to create branching conversations!" 
+                  }] 
+                }
+              : box
+          ))
+        }
+      } catch (error) {
+        console.error('Error generating welcome message:', error)
+        // Fallback if API call fails
+        setChatBoxes(prev => prev.map(box => 
+          box.id === "welcome" 
+            ? { 
+                ...box, 
+                messages: [{ 
+                  role: "assistant", 
+                  content: "🎉 Welcome to your LLM Playground! Your API keys are configured and ready. Start exploring the infinite canvas by typing a message below!" 
+                }] 
+              }
+            : box
+        ))
+      }
+    }
+  }, [apiKeyInputs, chatBoxes.length])
 
   // Handle canvas panning
   const handleMouseDown = useCallback(
@@ -149,25 +408,112 @@ export default function InfiniteCanvasApp() {
     [selectedText, canvasOffset, selectionSource],
   )
 
+  // API call function
+  const callLLMAPI = useCallback(async (model: string, messages: { role: string; content: string }[]) => {
+    const apiKey = apiKeys.find(key => {
+      const providerModels = API_PROVIDERS.find(p => p.name === key.provider)?.models || []
+      return providerModels.includes(model)
+    })
+
+    if (!apiKey) {
+      throw new Error(`No API key found for model: ${model}`)
+    }
+
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages,
+          model,
+          provider: apiKey.provider,
+          apiKey: apiKey.key,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'API request failed')
+      }
+
+      const data = await response.json()
+      return data.response
+    } catch (error) {
+      console.error('API Error:', error)
+      throw new Error(`API Error: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
+  }, [apiKeys])
+
   // Handle chat input
-  const handleSendMessage = useCallback((chatBoxId: string) => {
+  const handleSendMessage = useCallback(async (chatBoxId: string) => {
+    const currentBox = chatBoxes.find(box => box.id === chatBoxId)
+    if (!currentBox || !currentBox.input.trim()) return
+
+    const userMessage = { role: "user" as const, content: currentBox.input }
+    
+    // Add user message and clear input immediately
     setChatBoxes((prev) =>
       prev.map((box) => {
-        if (box.id === chatBoxId && box.input.trim()) {
-          const newMessages = [
-            ...box.messages,
-            { role: "user" as const, content: box.input },
-            {
-              role: "assistant" as const,
-              content: `This is a simulated response from ${box.llmType} to: "${box.input}". Here's some additional content that you can select to create new conversations. The beauty of this infinite canvas is that you can branch conversations in any direction, creating a web of interconnected AI discussions that build upon each other.`,
-            },
-          ]
-          return { ...box, messages: newMessages, input: "" }
+        if (box.id === chatBoxId) {
+          return {
+            ...box,
+            messages: [...box.messages, userMessage],
+            input: ""
+          }
         }
         return box
       }),
     )
-  }, [])
+
+    // Prepare messages for API call
+    const allMessages = [...currentBox.messages, userMessage]
+    
+    try {
+      // Add loading state
+      setChatBoxes((prev) =>
+        prev.map((box) => {
+          if (box.id === chatBoxId) {
+            return {
+              ...box,
+              messages: [...box.messages, { role: "assistant" as const, content: "🤔 Thinking..." }]
+            }
+          }
+          return box
+        }),
+      )
+
+      const response = await callLLMAPI(currentBox.llmType, allMessages)
+      
+      // Replace loading message with actual response
+      setChatBoxes((prev) =>
+        prev.map((box) => {
+          if (box.id === chatBoxId) {
+            const newMessages = [...box.messages]
+            newMessages[newMessages.length - 1] = { role: "assistant" as const, content: response }
+            return { ...box, messages: newMessages }
+          }
+          return box
+        }),
+      )
+    } catch (error) {
+      // Replace loading message with error
+      setChatBoxes((prev) =>
+        prev.map((box) => {
+          if (box.id === chatBoxId) {
+            const newMessages = [...box.messages]
+            newMessages[newMessages.length - 1] = { 
+              role: "assistant" as const, 
+              content: `❌ Error: ${error instanceof Error ? error.message : 'Failed to get response'}` 
+            }
+            return { ...box, messages: newMessages }
+          }
+          return box
+        }),
+      )
+    }
+  }, [chatBoxes, callLLMAPI])
 
   // Handle chat box dragging
   const handleChatBoxMouseDown = useCallback((e: React.MouseEvent, chatBoxId: string) => {
@@ -335,15 +681,28 @@ export default function InfiniteCanvasApp() {
       {/* Infinite Background Layer */}
       <div className="fixed inset-0 bg-background" />
       
-      {/* Dark Mode Toggle */}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={() => setIsDarkMode(!isDarkMode)}
-        className="fixed top-4 right-4 z-50 bg-background/80 backdrop-blur-sm border border-border"
-      >
-        {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-      </Button>
+      {/* Top Controls */}
+      <div className="fixed top-4 right-4 z-50 flex gap-2">
+        {/* Settings Button */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowApiKeyModal(true)}
+          className="bg-background/80 backdrop-blur-sm border border-border"
+        >
+          <Settings className="h-4 w-4" />
+        </Button>
+        
+        {/* Dark Mode Toggle */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setIsDarkMode(!isDarkMode)}
+          className="bg-background/80 backdrop-blur-sm border border-border"
+        >
+          {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </Button>
+      </div>
 
       {/* Main Canvas */}
       <div
@@ -496,6 +855,109 @@ export default function InfiniteCanvasApp() {
           />
         </div>
       </div>
+
+      {/* Welcome Modal */}
+      <Dialog open={showWelcomeModal} onOpenChange={setShowWelcomeModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Welcome to LLM Playground!
+            </DialogTitle>
+            <DialogDescription className="text-left space-y-3">
+              <p>🎨 Create an infinite canvas of AI conversations</p>
+              <p>🔗 Connect ideas by selecting text and choosing different AI models</p>
+              <p>📝 Take notes and build your knowledge web</p>
+              <p className="font-medium">To get started, please configure at least one API key:</p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => {
+              setShowWelcomeModal(false)
+              setShowApiKeyModal(true)
+            }} className="w-full">
+              <Key className="h-4 w-4 mr-2" />
+              Setup API Keys
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* API Key Setup Modal */}
+      <Dialog open={showApiKeyModal} onOpenChange={setShowApiKeyModal}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5 text-primary" />
+              API Key Configuration
+            </DialogTitle>
+            <DialogDescription>
+              Add your API keys to start chatting with AI models. Your keys are stored securely in your browser.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4">
+            {apiKeyInputs.map((input) => (
+              <div key={input.id} className="p-4 border rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <select
+                    value={input.provider}
+                    onChange={(e) => updateApiKeyInput(input.id, 'provider', e.target.value)}
+                    className="px-3 py-2 border rounded-md bg-background"
+                  >
+                    {API_PROVIDERS.map(provider => (
+                      <option key={provider.name} value={provider.name}>
+                        {provider.name}
+                      </option>
+                    ))}
+                  </select>
+                  
+                  {apiKeyInputs.length > 1 && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => removeApiKeyInput(input.id)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+                
+                <Input
+                  placeholder={API_PROVIDERS.find(p => p.name === input.provider)?.placeholder || "Enter API key..."}
+                  value={input.key}
+                  onChange={(e) => updateApiKeyInput(input.id, 'key', e.target.value)}
+                  type="password"
+                />
+                
+                <Input
+                  placeholder="Label (optional)"
+                  value={input.label}
+                  onChange={(e) => updateApiKeyInput(input.id, 'label', e.target.value)}
+                />
+              </div>
+            ))}
+            
+            <Button
+              variant="outline"
+              onClick={addApiKeyInput}
+              className="w-full border-dashed"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Another API Key
+            </Button>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowApiKeyModal(false)}>
+              Cancel
+            </Button>
+            <Button onClick={saveApiKeys} disabled={!apiKeyInputs.some(input => input.key.trim())}>
+              Save API Keys
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
