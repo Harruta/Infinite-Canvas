@@ -126,8 +126,8 @@ export default function InfiniteCanvasApp() {
           id: Date.now().toString(),
           x: selectedText.rect.left - canvasOffset.x + 50,
           y: selectedText.rect.bottom - canvasOffset.y + 10,
-          messages: [{ role: "assistant", content: `Context from previous conversation: "${selectedText.text}"` }],
-          input: "", // Empty input ready for user to type their question
+          messages: [], // Start with empty messages
+          input: selectedText.text, // Put the selected text directly in the input field
           llmType: aiModel,
           parentId: selectionSource || undefined,
         }
@@ -140,6 +140,8 @@ export default function InfiniteCanvasApp() {
           const newChatInput = document.querySelector(`[data-chat-id="${newChatBox.id}"] input`)
           if (newChatInput) {
             ;(newChatInput as HTMLInputElement).focus()
+            // Position cursor at the end of the text
+            ;(newChatInput as HTMLInputElement).setSelectionRange(selectedText.text.length, selectedText.text.length)
           }
         }, 100)
       }
@@ -244,6 +246,7 @@ export default function InfiniteCanvasApp() {
       if (childBox.parentId) {
         const parentBox = chatBoxes.find((box) => box.id === childBox.parentId)
         if (parentBox) {
+          console.log('Rendering connection from', parentBox.id, 'to', childBox.id);
           // Calculate connection points
           const parentCenterX = parentBox.x + 192 // Half of chat box width (384px / 2)
           const parentCenterY = parentBox.y + 100 // Approximate center height
@@ -269,50 +272,54 @@ export default function InfiniteCanvasApp() {
           connections.push(
             <svg
               key={`connection-${parentBox.id}-${childBox.id}`}
-              className="absolute inset-0 pointer-events-none"
-              style={{ zIndex: 1 }}
+              className="absolute pointer-events-none"
+              style={{ 
+                zIndex: 5,
+                left: 0,
+                top: 0,
+                width: '100%',
+                height: '100%',
+                overflow: 'visible'
+              }}
             >
-              {/* Main connection line with dashes */}
+              {/* Simple, bold connection line */}
               <line
                 x1={parentCenterX}
                 y1={parentCenterY}
                 x2={childCenterX}
                 y2={childCenterY}
-                stroke="currentColor"
-                strokeWidth="2"
-                className="text-primary/50"
-                strokeDasharray="8,4"
+                stroke="#d97706"
+                strokeWidth="4"
+                strokeDasharray="10,5"
+                opacity="0.8"
               />
 
-              {/* Chain links along the line */}
-              {chainLinks}
+              {/* Connection points */}
+              <circle cx={parentCenterX} cy={parentCenterY} r="8" fill="#d97706" stroke="#ffffff" strokeWidth="3" />
+              <circle cx={childCenterX} cy={childCenterY} r="8" fill="#d97706" stroke="#ffffff" strokeWidth="3" />
 
-              {/* Start and end connection points */}
-              <circle cx={parentCenterX} cy={parentCenterY} r="5" className="fill-primary stroke-background stroke-2" />
-              <circle cx={childCenterX} cy={childCenterY} r="5" className="fill-primary stroke-background stroke-2" />
-
-              {/* Arrow at the end */}
+              {/* Arrow pointing to child */}
               <defs>
                 <marker
-                  id={`arrowhead-${childBox.id}`}
-                  markerWidth="10"
-                  markerHeight="7"
-                  refX="9"
-                  refY="3.5"
+                  id={`arrow-${childBox.id}`}
+                  markerWidth="15"
+                  markerHeight="10"
+                  refX="12"
+                  refY="5"
                   orient="auto"
+                  markerUnits="strokeWidth"
                 >
-                  <polygon points="0 0, 10 3.5, 0 7" className="fill-primary" />
+                  <path d="M0,0 L0,10 L15,5 z" fill="#d97706" />
                 </marker>
               </defs>
               <line
-                x1={childCenterX - 15}
+                x1={childCenterX - 25}
                 y1={childCenterY}
-                x2={childCenterX}
+                x2={childCenterX - 8}
                 y2={childCenterY}
-                stroke="currentColor"
-                strokeWidth="2"
-                className="text-primary"
-                markerEnd={`url(#arrowhead-${childBox.id})`}
+                stroke="#d97706"
+                strokeWidth="4"
+                markerEnd={`url(#arrow-${childBox.id})`}
               />
             </svg>,
           )
