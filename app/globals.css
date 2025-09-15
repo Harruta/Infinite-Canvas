@@ -41,7 +41,7 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
+  --background: oklch(0.09 0 0); /* Much darker background for true dark mode */
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.145 0 0);
   --card-foreground: oklch(0.985 0 0);
@@ -130,6 +130,7 @@
   position: relative;
   overflow: hidden;
   cursor: grab;
+  background: transparent; /* Remove any background from the draggable canvas */
 }
 
 .canvas-container:active {
@@ -218,4 +219,3 @@
 .notepad-toggle.sidebar-open {
   right: 320px;
 }
-

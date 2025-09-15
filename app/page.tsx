@@ -1,14 +1,13 @@
 "use client"
 
 import type React from "react"
+import type { JSX } from "react/jsx-runtime" // Import JSX to fix the undeclared variable error
 
 import { useState, useRef, useCallback, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { Card } from "@/components/ui/card"
-import { ChevronLeft, Plus, Send, Copy, Trash2, Bot, Zap, Brain, Sparkles } from "lucide-react"
+import { ChevronLeft, Send, Copy, Trash2, Bot, Zap, Brain, Sparkles, Paperclip, Moon, Sun, Mic } from "lucide-react"
 
 interface ChatBox {
   id: string
@@ -17,6 +16,7 @@ interface ChatBox {
   messages: { role: "user" | "assistant"; content: string }[]
   input: string
   llmType: string
+  parentId?: string
 }
 
 interface Note {
@@ -42,7 +42,7 @@ export default function InfiniteCanvasApp() {
         {
           role: "assistant",
           content:
-            "Hello! I'm your AI assistant. This is  dummy text to demonstrate text selection functionality. You can select any part of this text and see the selection bar appear with options to add to notepad or create new AI chat boxes. Try selecting different portions of this response to see how the interface works. The selection bar will show various AI model options that you can use to continue the conversation with different AI assistants.",
+            "Hello! I'm your AI assistant. This is some dummy text to demonstrate text selection functionality. You can select any part of this text and see the selection bar appear with options to add to notepad or create new AI chat boxes. Try selecting different portions of this response to see how the interface works. The selection bar will show various AI model options that you can use to continue the conversation with different AI assistants.",
         },
       ],
       input: "",
@@ -57,8 +57,12 @@ export default function InfiniteCanvasApp() {
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 })
   const [selectedText, setSelectedText] = useState<{ text: string; rect: DOMRect } | null>(null)
   const [draggedChatBox, setDraggedChatBox] = useState<string | null>(null)
+  const [isDarkMode, setIsDarkMode] = useState(false)
+  const [selectionSource, setSelectionSource] = useState<string | null>(null)
 
   const canvasRef = useRef<HTMLDivElement>(null)
+
+  // Handle canvas panning
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       if (e.target === canvasRef.current) {
@@ -91,9 +95,27 @@ export default function InfiniteCanvasApp() {
     if (selection && selection.toString().trim()) {
       const range = selection.getRangeAt(0)
       const rect = range.getBoundingClientRect()
+
+      let chatElement: Element | null = null
+      let node = selection.anchorNode
+
+      // If anchorNode is a text node, get its parent element
+      if (node?.nodeType === Node.TEXT_NODE) {
+        node = node.parentElement
+      }
+
+      // Now we can safely use closest on the element
+      if (node && node.nodeType === Node.ELEMENT_NODE) {
+        chatElement = (node as Element).closest("[data-chat-id]")
+      }
+
+      const sourceChatId = chatElement?.getAttribute("data-chat-id") || null
+
       setSelectedText({ text: selection.toString(), rect })
+      setSelectionSource(sourceChatId)
     } else {
       setSelectedText(null)
+      setSelectionSource(null)
     }
   }, [])
 
@@ -104,22 +126,25 @@ export default function InfiniteCanvasApp() {
           id: Date.now().toString(),
           x: selectedText.rect.left - canvasOffset.x + 50,
           y: selectedText.rect.bottom - canvasOffset.y + 10,
-          messages: [
-            { role: "user", content: selectedText.text },
-            {
-              role: "assistant",
-              content: `This is a simulated response from ${aiModel}. I'm analyzing your selected text: "${selectedText.text}". Here's some additional dummy content to demonstrate the text selection feature. You can continue selecting text from this response to create even more AI conversations and build a complex network of interconnected thoughts and ideas.`,
-            },
-          ],
-          input: "",
+          messages: [{ role: "assistant", content: `Context from previous conversation: "${selectedText.text}"` }],
+          input: "", // Empty input ready for user to type their question
           llmType: aiModel,
+          parentId: selectionSource || undefined,
         }
         setChatBoxes((prev) => [...prev, newChatBox])
         setSelectedText(null)
+        setSelectionSource(null)
         window.getSelection()?.removeAllRanges()
+
+        setTimeout(() => {
+          const newChatInput = document.querySelector(`[data-chat-id="${newChatBox.id}"] input`)
+          if (newChatInput) {
+            ;(newChatInput as HTMLInputElement).focus()
+          }
+        }, 100)
       }
     },
-    [selectedText, canvasOffset],
+    [selectedText, canvasOffset, selectionSource],
   )
 
   // Handle chat input
@@ -211,12 +236,112 @@ export default function InfiniteCanvasApp() {
     return () => document.removeEventListener("mouseup", handleTextSelection)
   }, [handleTextSelection])
 
+  // Render connection lines between related chat boxes
+  const renderConnections = useCallback(() => {
+    const connections: JSX.Element[] = []
+
+    chatBoxes.forEach((childBox) => {
+      if (childBox.parentId) {
+        const parentBox = chatBoxes.find((box) => box.id === childBox.parentId)
+        if (parentBox) {
+          // Calculate connection points
+          const parentCenterX = parentBox.x + 192 // Half of chat box width (384px / 2)
+          const parentCenterY = parentBox.y + 100 // Approximate center height
+          const childCenterX = childBox.x + 192
+          const childCenterY = childBox.y + 100
+
+          const distance = Math.sqrt(
+            Math.pow(childCenterX - parentCenterX, 2) + Math.pow(childCenterY - parentCenterY, 2),
+          )
+          const numChainLinks = Math.floor(distance / 30) // One chain link every 30px
+          const chainLinks = []
+
+          for (let i = 1; i < numChainLinks; i++) {
+            const t = i / numChainLinks
+            const x = parentCenterX + (childCenterX - parentCenterX) * t
+            const y = parentCenterY + (childCenterY - parentCenterY) * t
+
+            chainLinks.push(
+              <circle key={`chain-${i}`} cx={x} cy={y} r="3" className="fill-primary/70 stroke-primary stroke-1" />,
+            )
+          }
+
+          connections.push(
+            <svg
+              key={`connection-${parentBox.id}-${childBox.id}`}
+              className="absolute inset-0 pointer-events-none"
+              style={{ zIndex: 1 }}
+            >
+              {/* Main connection line with dashes */}
+              <line
+                x1={parentCenterX}
+                y1={parentCenterY}
+                x2={childCenterX}
+                y2={childCenterY}
+                stroke="currentColor"
+                strokeWidth="2"
+                className="text-primary/50"
+                strokeDasharray="8,4"
+              />
+
+              {/* Chain links along the line */}
+              {chainLinks}
+
+              {/* Start and end connection points */}
+              <circle cx={parentCenterX} cy={parentCenterY} r="5" className="fill-primary stroke-background stroke-2" />
+              <circle cx={childCenterX} cy={childCenterY} r="5" className="fill-primary stroke-background stroke-2" />
+
+              {/* Arrow at the end */}
+              <defs>
+                <marker
+                  id={`arrowhead-${childBox.id}`}
+                  markerWidth="10"
+                  markerHeight="7"
+                  refX="9"
+                  refY="3.5"
+                  orient="auto"
+                >
+                  <polygon points="0 0, 10 3.5, 0 7" className="fill-primary" />
+                </marker>
+              </defs>
+              <line
+                x1={childCenterX - 15}
+                y1={childCenterY}
+                x2={childCenterX}
+                y2={childCenterY}
+                stroke="currentColor"
+                strokeWidth="2"
+                className="text-primary"
+                markerEnd={`url(#arrowhead-${childBox.id})`}
+              />
+            </svg>,
+          )
+        }
+      }
+    })
+
+    return connections
+  }, [chatBoxes])
+
   return (
-    <div className="h-screen w-screen overflow-hidden relative">
+    <div className={`h-screen w-screen overflow-hidden relative ${isDarkMode ? "dark" : ""}`}>
+      {/* Infinite Background Layer */}
+      <div className="fixed inset-0 bg-background" />
+      
+      {/* Dark Mode Toggle */}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => setIsDarkMode(!isDarkMode)}
+        className="fixed top-4 right-4 z-50 bg-background/80 backdrop-blur-sm border border-border"
+      >
+        {isDarkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      </Button>
+
       {/* Main Canvas */}
       <div
         ref={canvasRef}
-        className="canvas-container canvas-grid h-full w-full"
+        className="canvas-container h-full w-full border-r border-border relative"
         style={{
           transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px)`,
         }}
@@ -224,16 +349,19 @@ export default function InfiniteCanvasApp() {
         onMouseMove={isDragging ? handleMouseMove : draggedChatBox ? handleChatBoxMouseMove : undefined}
         onMouseUp={isDragging ? handleMouseUp : draggedChatBox ? handleChatBoxMouseUp : undefined}
       >
+        {renderConnections()}
+
         {/* Chat Boxes */}
         {chatBoxes.map((chatBox) => (
           <div
             key={chatBox.id}
-            className="absolute bg-white/90 backdrop-blur-sm border border-gray-200 rounded-lg shadow-lg p-4 w-80 cursor-move"
-            style={{ left: chatBox.x, top: chatBox.y }}
+            className="absolute bg-background/95 backdrop-blur-sm border-2 border-border rounded-2xl shadow-lg p-6 w-96 cursor-move"
+            style={{ left: chatBox.x, top: chatBox.y, zIndex: 10 }}
             onMouseDown={(e) => handleChatBoxMouseDown(e, chatBox.id)}
+            data-chat-id={chatBox.id}
           >
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-medium text-gray-600">{chatBox.llmType}</span>
+            <div className="flex items-center justify-between mb-4">
+              <span className="text-sm font-medium text-muted-foreground">{chatBox.llmType}</span>
               <Button
                 variant="ghost"
                 size="sm"
@@ -243,35 +371,54 @@ export default function InfiniteCanvasApp() {
               </Button>
             </div>
 
-            <div className="space-y-3 mb-4 max-h-64 overflow-y-auto">
+            <div className="space-y-4 mb-6 max-h-64 overflow-y-auto">
               {chatBox.messages.map((message, index) => (
                 <div
                   key={index}
-                  className={`p-3 rounded-lg text-sm select-text ${
-                    message.role === "user" ? "bg-blue-500 text-white ml-4" : "bg-gray-100 text-gray-800 mr-4"
+                  className={`p-4 rounded-xl text-sm select-text border border-border/50 ${
+                    message.role === "user"
+                      ? "bg-primary text-primary-foreground ml-8"
+                      : "bg-muted text-foreground mr-8"
                   }`}
                   onMouseUp={handleTextSelection}
+                  data-chat-id={chatBox.id}
                 >
                   {message.content}
                 </div>
               ))}
             </div>
 
-            <div className="flex gap-2">
-              <Input
-                value={chatBox.input}
-                onChange={(e) =>
-                  setChatBoxes((prev) =>
-                    prev.map((box) => (box.id === chatBox.id ? { ...box, input: e.target.value } : box)),
-                  )
-                }
-                placeholder="Type your message..."
-                onKeyDown={(e) => e.key === "Enter" && handleSendMessage(chatBox.id)}
-                className="flex-1"
-              />
-              <Button onClick={() => handleSendMessage(chatBox.id)} size="sm">
-                <Send className="h-4 w-4" />
-              </Button>
+            <div className="relative">
+              <div className="flex items-center gap-3 p-4 bg-muted/50 rounded-2xl border-2 border-border">
+                <Button variant="ghost" size="sm" className="p-2 h-auto">
+                  <Paperclip className="h-4 w-4 text-muted-foreground" />
+                </Button>
+
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Send className="h-4 w-4" />
+                  <span>Auto</span>
+                </div>
+
+                <Input
+                  value={chatBox.input}
+                  onChange={(e) =>
+                    setChatBoxes((prev) =>
+                      prev.map((box) => (box.id === chatBox.id ? { ...box, input: e.target.value } : box)),
+                    )
+                  }
+                  placeholder="What do you want to know?"
+                  onKeyDown={(e) => e.key === "Enter" && handleSendMessage(chatBox.id)}
+                  className="flex-1 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/60"
+                />
+
+                <Button
+                  onClick={() => handleSendMessage(chatBox.id)}
+                  size="sm"
+                  className="rounded-full bg-foreground text-background hover:bg-foreground/90 p-2 h-auto"
+                >
+                  <Mic className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         ))}
@@ -279,7 +426,7 @@ export default function InfiniteCanvasApp() {
 
       {selectedText && (
         <div
-          className="fixed bg-white border border-gray-200 rounded-lg shadow-lg p-2 flex items-center gap-2 z-50"
+          className="fixed bg-background/95 backdrop-blur-sm border-2 border-border rounded-lg shadow-lg p-2 flex items-center gap-2 z-50"
           style={{
             left: Math.min(selectedText.rect.left, window.innerWidth - 400),
             top: selectedText.rect.top - 60,
@@ -295,7 +442,7 @@ export default function InfiniteCanvasApp() {
             Add to Notes
           </Button>
 
-          <div className="w-px h-6 bg-gray-300" />
+          <div className="w-px h-6 bg-border" />
 
           {AI_MODELS.map((model) => {
             const IconComponent = model.icon
@@ -317,48 +464,31 @@ export default function InfiniteCanvasApp() {
 
       {/* Notepad Toggle Button */}
       <button
-        className={`notepad-toggle ${sidebarOpen ? "sidebar-open" : ""}`}
+        className={`fixed right-0 top-1/2 -translate-y-1/2 bg-background/95 backdrop-blur-sm border-l-2 border-border rounded-r-lg p-2 transition-all duration-300 z-40 ${
+          sidebarOpen ? "translate-x-0" : "translate-x-full"
+        }`}
         onClick={() => setSidebarOpen(!sidebarOpen)}
       >
         <ChevronLeft className={`h-4 w-4 transition-transform ${sidebarOpen ? "rotate-180" : ""}`} />
       </button>
 
       {/* Notepad Sidebar */}
-      <div className={`notepad-sidebar w-80 ${sidebarOpen ? "" : "collapsed"}`}>
+      <div
+        className={`fixed right-0 top-0 h-full w-80 bg-background/95 backdrop-blur-sm border-l-2 border-border transition-transform duration-300 z-30 ${
+          sidebarOpen ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
         <div className="p-4 h-full flex flex-col">
-          <h2 className="text-lg font-semibold mb-4">Notes</h2>
+          <h2 className="text-lg font-semibold mb-4 text-foreground border-b border-border pb-2">Notes</h2>
 
-          <div className="flex gap-2 mb-4">
-            <Textarea
-              value={newNote}
-              onChange={(e) => setNewNote(e.target.value)}
-              placeholder="Add a new note..."
-              className="flex-1"
-              rows={3}
-            />
-            <Button onClick={addNote} className="self-end">
-              <Plus className="h-4 w-4" />
-            </Button>
-          </div>
-
-          <ScrollArea className="flex-1">
-            <div className="space-y-3">
-              {notes.map((note) => (
-                <Card key={note.id} className="p-3">
-                  <div className="flex justify-between items-start mb-2">
-                    <span className="text-xs text-muted-foreground">{note.timestamp.toLocaleTimeString()}</span>
-                    <Button variant="ghost" size="sm" onClick={() => deleteNote(note.id)}>
-                      <Trash2 className="h-3 w-3" />
-                    </Button>
-                  </div>
-                  <p className="text-sm text-balance">{note.content}</p>
-                </Card>
-              ))}
-            </div>
-          </ScrollArea>
+          <Textarea
+            value={newNote}
+            onChange={(e) => setNewNote(e.target.value)}
+            placeholder="Write your notes here..."
+            className="flex-1 resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-0"
+          />
         </div>
       </div>
     </div>
   )
 }
-
